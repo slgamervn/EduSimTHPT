@@ -3,9 +3,22 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+val releaseStorePath = System.getenv("BLOCKLINE_KEYSTORE_PATH")
+val releaseStorePassword = System.getenv("BLOCKLINE_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("BLOCKLINE_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("BLOCKLINE_KEY_PASSWORD")
+val hasReleaseSigning = listOf(
+    releaseStorePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "vn.edusim.thpt"
     compileSdk = 35
+
     defaultConfig {
         applicationId = "vn.edusim.thpt"
         minSdk = 26
@@ -13,13 +26,35 @@ android {
         versionCode = 1
         versionName = "0.1.0"
     }
-    buildTypes { release { isMinifyEnabled = false } }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseStorePath!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
     kotlinOptions { jvmTarget = "17" }
 }
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.activity:activity-compose:1.10.0")
