@@ -4,10 +4,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val releaseStorePath = System.getenv("BLOCKLINE_KEYSTORE_PATH")
-val releaseStorePassword = System.getenv("BLOCKLINE_KEYSTORE_PASSWORD")
-val releaseKeyAlias = System.getenv("BLOCKLINE_KEY_ALIAS")
-val releaseKeyPassword = System.getenv("BLOCKLINE_KEY_PASSWORD")
+val releaseStorePath = System.getenv("SIGNING_KEYSTORE_PATH")
+val releaseStorePassword = System.getenv("SIGNING_STORE_PASSWORD")
+val releaseKeyAlias = System.getenv("SIGNING_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("SIGNING_KEY_PASSWORD")
 val hasReleaseSigning = listOf(
     releaseStorePath,
     releaseStorePassword,
