@@ -27,31 +27,48 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Decode existing Blockline signing keystore
+      - name: Prepare Blockline signing key
+        id: signing
         env:
           BLOCKLINE_KEYSTORE_BASE64: ${{ secrets.BLOCKLINE_KEYSTORE_BASE64 }}
+          BLOCKLINE_KEYSTORE_PASSWORD: ${{ secrets.BLOCKLINE_KEYSTORE_PASSWORD }}
+          BLOCKLINE_KEY_ALIAS: ${{ secrets.BLOCKLINE_KEY_ALIAS }}
+          BLOCKLINE_KEY_PASSWORD: ${{ secrets.BLOCKLINE_KEY_PASSWORD }}
+        shell: bash
         run: |
-          test -n "$BLOCKLINE_KEYSTORE_BASE64" || { echo "Missing BLOCKLINE_KEYSTORE_BASE64 repository secret"; exit 1; }
-          echo "$BLOCKLINE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/blockline-release.jks"
-          echo "BLOCKLINE_KEYSTORE_PATH=$RUNNER_TEMP/blockline-release.jks" >> "$GITHUB_ENV"
+          if [[ -n "$BLOCKLINE_KEYSTORE_BASE64" && -n "$BLOCKLINE_KEYSTORE_PASSWORD" && -n "$BLOCKLINE_KEY_ALIAS" && -n "$BLOCKLINE_KEY_PASSWORD" ]]; then
+            echo "$BLOCKLINE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/blockline-release.jks"
+            test -s "$RUNNER_TEMP/blockline-release.jks"
+            echo "BLOCKLINE_KEYSTORE_PATH=$RUNNER_TEMP/blockline-release.jks" >> "$GITHUB_ENV"
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Blockline signing secrets are missing in EduSimTHPT. Building a debug APK instead; it will not be signed with the Blockline release key."
+          fi
 
       - name: Build signed release APK
+        if: steps.signing.outputs.ready == 'true'
         env:
           BLOCKLINE_KEYSTORE_PASSWORD: ${{ secrets.BLOCKLINE_KEYSTORE_PASSWORD }}
           BLOCKLINE_KEY_ALIAS: ${{ secrets.BLOCKLINE_KEY_ALIAS }}
           BLOCKLINE_KEY_PASSWORD: ${{ secrets.BLOCKLINE_KEY_PASSWORD }}
-        run: |
-          test -n "$BLOCKLINE_KEYSTORE_PASSWORD" || { echo "Missing BLOCKLINE_KEYSTORE_PASSWORD repository secret"; exit 1; }
-          test -n "$BLOCKLINE_KEY_ALIAS" || { echo "Missing BLOCKLINE_KEY_ALIAS repository secret"; exit 1; }
-          test -n "$BLOCKLINE_KEY_PASSWORD" || { echo "Missing BLOCKLINE_KEY_PASSWORD repository secret"; exit 1; }
-          gradle assembleRelease
+        run: gradle assembleRelease
 
-      - name: Rename APK
+      - name: Build debug APK when release key is unavailable
+        if: steps.signing.outputs.ready != 'true'
+        run: gradle assembleDebug
+
+      - name: Prepare APK artifact
+        shell: bash
         run: |
           mkdir -p output
-          cp app/build/outputs/apk/release/app-release.apk "output/EduSim-THPT-v${GITHUB_REF_NAME#v}.apk"
-          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
-            cp app/build/outputs/apk/release/app-release.apk output/EduSim-THPT-latest.apk
+          if [[ "${{ steps.signing.outputs.ready }}" == "true" ]]; then
+            cp app/build/outputs/apk/release/app-release.apk "output/EduSim-THPT-v${GITHUB_REF_NAME#v}.apk"
+            if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
+              cp app/build/outputs/apk/release/app-release.apk output/EduSim-THPT-latest.apk
+            fi
+          else
+            cp app/build/outputs/apk/debug/app-debug.apk output/EduSim-THPT-debug.apk
           fi
 
       - name: Upload APK artifact
@@ -62,7 +79,7 @@ jobs:
           retention-days: 14
 
       - name: Publish GitHub Release for version tags
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.ready == 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: output/*.apk
