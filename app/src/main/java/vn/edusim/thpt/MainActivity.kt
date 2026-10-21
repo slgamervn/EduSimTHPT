@@ -7,6 +7,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -133,7 +135,7 @@ fun SpringSimulation(onBack: () -> Unit) {
     val acceleration = -omega * omega * displacement
     val energy = 0.5f * stiffness * amplitude * amplitude
 
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("‹  Quay lại", color = Teal, modifier = Modifier.clickable { onBack() }.padding(8.dp))
             Spacer(Modifier.weight(1f))
