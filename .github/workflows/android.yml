@@ -27,45 +27,64 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Prepare Blockline signing key
+      - name: Validate signing key from repository secrets
         id: signing
         env:
-          BLOCKLINE_KEYSTORE_BASE64: ${{ secrets.BLOCKLINE_KEYSTORE_BASE64 }}
-          BLOCKLINE_KEYSTORE_PASSWORD: ${{ secrets.BLOCKLINE_KEYSTORE_PASSWORD }}
-          BLOCKLINE_KEY_ALIAS: ${{ secrets.BLOCKLINE_KEY_ALIAS }}
-          BLOCKLINE_KEY_PASSWORD: ${{ secrets.BLOCKLINE_KEY_PASSWORD }}
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.BLOCKLINE_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.BLOCKLINE_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.BLOCKLINE_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.BLOCKLINE_KEY_PASSWORD }}
         shell: bash
         run: |
-          if [[ -n "$BLOCKLINE_KEYSTORE_BASE64" && -n "$BLOCKLINE_KEYSTORE_PASSWORD" && -n "$BLOCKLINE_KEY_ALIAS" && -n "$BLOCKLINE_KEY_PASSWORD" ]]; then
-            if ! echo "$BLOCKLINE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/blockline-release.jks"; then
-              echo "::warning::Keystore secret is not valid Base64. A debug APK will be built instead."
-              echo "ready=false" >> "$GITHUB_OUTPUT"
-            elif ! keytool -list -keystore "$RUNNER_TEMP/blockline-release.jks" -storepass "$BLOCKLINE_KEYSTORE_PASSWORD" -alias "$BLOCKLINE_KEY_ALIAS" >/dev/null 2>&1; then
-              echo "::warning::Cannot open the keystore with the configured store password and alias. Check the EduSimTHPT signing secrets. A debug APK will be built instead."
-              echo "ready=false" >> "$GITHUB_OUTPUT"
-            else
-              echo "BLOCKLINE_KEYSTORE_PATH=$RUNNER_TEMP/blockline-release.jks" >> "$GITHUB_ENV"
-              echo "ready=true" >> "$GITHUB_OUTPUT"
-            fi
-          else
+          set -uo pipefail
+          KEYSTORE="$RUNNER_TEMP/release-signing.jks"
+
+          if [[ -z "$SIGNING_KEYSTORE_BASE64" || -z "$SIGNING_STORE_PASSWORD" || -z "$SIGNING_KEY_ALIAS" || -z "$SIGNING_KEY_PASSWORD" ]]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Blockline signing secrets are missing in EduSimTHPT. Building a debug APK instead; it will not be signed with the Blockline release key."
+            echo "::warning::Signing secrets are missing. Building a debug APK instead."
+            exit 0
           fi
+
+          if ! printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::The keystore secret is not valid Base64. Building a debug APK instead."
+            exit 0
+          fi
+
+          if ! keytool -list -keystore "$KEYSTORE" -storepass "$SIGNING_STORE_PASSWORD" -alias "$SIGNING_KEY_ALIAS" >/dev/null 2>&1; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::The keystore, store password, or key alias from repository secrets could not be validated. Building a debug APK instead."
+            exit 0
+          fi
+
+          # Test the private-key password by signing a temporary file. No secret values are printed.
+          mkdir -p "$RUNNER_TEMP/signing-check"
+          printf 'signing validation\n' > "$RUNNER_TEMP/signing-check/check.txt"
+          jar --create --file "$RUNNER_TEMP/signing-check/check.jar" -C "$RUNNER_TEMP/signing-check" check.txt
+          if ! jarsigner -keystore "$KEYSTORE" -storepass "$SIGNING_STORE_PASSWORD" -keypass "$SIGNING_KEY_PASSWORD" -signedjar "$RUNNER_TEMP/signing-check/check-signed.jar" "$RUNNER_TEMP/signing-check/check.jar" "$SIGNING_KEY_ALIAS" >/dev/null 2>&1; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::The private-key password in repository secrets could not sign a test file. Check the configured key password. Building a debug APK instead."
+            exit 0
+          fi
+
+          echo "SIGNING_KEYSTORE_PATH=$KEYSTORE" >> "$GITHUB_ENV"
+          echo "SIGNING_STORE_PASSWORD=$SIGNING_STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "SIGNING_KEY_ALIAS=$SIGNING_KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "SIGNING_KEY_PASSWORD=$SIGNING_KEY_PASSWORD" >> "$GITHUB_ENV"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "Signing keystore, alias, store password, and private-key password validated."
 
       - name: Build APK
         id: build
         shell: bash
         env:
           SIGNING_READY: ${{ steps.signing.outputs.ready }}
-          BLOCKLINE_KEYSTORE_PASSWORD: ${{ secrets.BLOCKLINE_KEYSTORE_PASSWORD }}
-          BLOCKLINE_KEY_ALIAS: ${{ secrets.BLOCKLINE_KEY_ALIAS }}
-          BLOCKLINE_KEY_PASSWORD: ${{ secrets.BLOCKLINE_KEY_PASSWORD }}
         run: |
           if [[ "$SIGNING_READY" == "true" ]]; then
             if gradle assembleRelease; then
               echo "signed=true" >> "$GITHUB_OUTPUT"
             else
-              echo "::warning::Release packaging failed, commonly because the private-key password is incorrect. Falling back to a debug APK; verify BLOCKLINE_KEY_PASSWORD in repository secrets."
+              echo "::warning::Release build failed. Falling back to a debug APK; inspect the Gradle log for the release error."
               gradle assembleDebug
               echo "signed=false" >> "$GITHUB_OUTPUT"
             fi
